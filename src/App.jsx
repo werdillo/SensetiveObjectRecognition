@@ -14,6 +14,7 @@ const App = () => {
   }); // init model & input shape
   const [detectionTime, setDetectionTime] = useState(0); // state for storing detection time
   const [loadTime, setLoadTime] = useState(0); // время загрузки модели
+  const [initialLoadTime, setInitialLoadTime] = useState(null); // время первой загрузки
   const [selectedModel, setSelectedModel] = useState("yolo11n"); // выбранная модель
 
   // references
@@ -37,7 +38,13 @@ const App = () => {
       );
 
       const endLoadTime = performance.now(); // конец замера времени загрузки
-      setLoadTime(endLoadTime - startLoadTime); // обновляем состояние времени загрузки
+      const loadDuration = endLoadTime - startLoadTime;
+
+      if (initialLoadTime === null) {
+        setInitialLoadTime(loadDuration); // сохранить время первой загрузки
+      } else {
+        setLoadTime(loadDuration); // сохранить время последующей загрузки
+      }
 
       // warming up model
       const dummyInput = tf.ones(yoloModel.inputs[0].shape);
@@ -127,6 +134,10 @@ const App = () => {
             <div className="info-item">
               <span className="info-label">Model Load Time:</span>
               <span className="info-value">{loadTime.toFixed(2)} ms</span>
+            </div>
+            <div className="info-item">
+                <span className="info-label">Initial Time:</span>
+                <span className="info-value">{ initialLoadTime !== null ? initialLoadTime.toFixed(2) : "0.00"} ms</span>
             </div>
           </div>
       </div>
