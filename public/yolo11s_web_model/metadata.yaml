@@ -1,0 +1,17 @@
+description: Ultralytics YOLO11s model trained on G:/INFO/RTU/baka/prakt2/datasets/privacyRTX/data.yaml
+author: Ultralytics
+date: '2024-11-18T22:54:10.254548'
+version: 8.3.32
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+batch: 1
+imgsz:
+- 640
+- 640
+names:
+  0: IDs
+  1: creditCard
+  2: face
+  3: signature
