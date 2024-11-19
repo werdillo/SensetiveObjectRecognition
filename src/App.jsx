@@ -170,7 +170,7 @@ const App = () => {
           </div>
         </div>
 
-        <ButtonHandler imageRef={imageRef} closeImage={closeImage} cameraRef={cameraRef} videoRef={videoRef} />
+        <ButtonHandler imageRef={imageRef} cameraRef={cameraRef} videoRef={videoRef} />
           <div className="info-panel">
             <div className="info-item">
               <span className="info-label">Detection Time:</span>
