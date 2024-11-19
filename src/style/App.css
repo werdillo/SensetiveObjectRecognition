@@ -2,11 +2,11 @@
   /* padding: 0 10px; */
   position: relative;
   min-height: 100vh;
-  background: #aaaaaa;
   display: flex;
   /* flex-direction: column; */
   justify-content: center;
   align-items: center;
+  background: #faf0cd65;
 }
 
 .App > * {
@@ -68,15 +68,27 @@
   height: 100%;
 }
 
+input {
+  width: 100%;
+  max-width: 400px;
+  height: 25px;
+  border-radius: 16px;
+  border: 1px solid #007bff;
+  padding: 2px 10px;
+  transition: 250ms;
+}
+input.active {
+  border: 1px solid #0866cb;
+}
+
 /* Общие стили для Card */
 .card {
   max-width: 600px;
   min-height: 500px;
   width: 100%;
   margin: 0 auto;
-  background-color: #fff;
   border-radius: 8px;
-  background: #ffffff;
+  background: rgb(255, 255, 255, 0.9);
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   padding: 24px;
   @media screen and (max-width: 600px) {

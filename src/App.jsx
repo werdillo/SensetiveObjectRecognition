@@ -118,7 +118,7 @@ const App = () => {
   const models = ["yolo11n", "yolo11s", "yolo11m"];
   return (
     <div className="App">
-        {loading.loading && <Loader>Loading model... {(loading.progress * 100).toFixed(2)}%</Loader>}
+        {loading.loading && <Loader> <b>Loading model... {(loading.progress * 100).toFixed(2)}%</b></Loader>}
       <div className="card">
       <div className="card-content">
 
@@ -130,7 +130,7 @@ const App = () => {
           </>
         :
         <>
-        <h2>Select Model:</h2>
+        <h3>Your device {device}</h3>
         <div className="buttons-wrapper">
           {models.map((model) => (
             <button
