@@ -18,7 +18,8 @@ const App = () => {
   const [loadTime, setLoadTime] = useState(0); // время загрузки модели
   const [initialLoadTime, setInitialLoadTime] = useState(null); // время первой загрузки
   const [selectedModel, setSelectedModel] = useState("yolo11n"); // выбранная модель
-  const [device, setDevice] = useState("m1 max"); // выбранная модель
+  const [device, setDevice] = useState(null); // выбранная модель
+  const [deviceInput, setDeviceInput] = useState("");
 
   // references
   const imageRef = useRef(null);
@@ -106,12 +107,29 @@ const App = () => {
     const endTime = performance.now();
     setDetectionTime(endTime - startTime);
   };
+
+  const handleDeviceSave = () => {
+    if (deviceInput.trim() !== "") {
+      setDevice(deviceInput.trim()); // сохранить имя устройства
+    } else {
+      alert("Please enter a valid device name.");
+    }
+  };
   const models = ["yolo11n", "yolo11s", "yolo11m"];
   return (
     <div className="App">
         {loading.loading && <Loader>Loading model... {(loading.progress * 100).toFixed(2)}%</Loader>}
       <div className="card">
-        <div className="card-content">
+      <div className="card-content">
+
+        {device === null ?
+          <>
+            Please enter your device model
+            <input onChange={e => setDeviceInput(e.target.value)}/>
+            <button onClick={handleDeviceSave}>Save</button>
+          </>
+        :
+        <>
         <h2>Select Model:</h2>
         <div className="buttons-wrapper">
           {models.map((model) => (
@@ -168,6 +186,8 @@ const App = () => {
                 <span className="info-value">{ initialLoadTime !== null ? initialLoadTime.toFixed(2) : "0.00"} ms</span>
             </div>
           </div>
+          </>
+        }
       </div>
     </div>
   </div>
