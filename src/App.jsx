@@ -56,7 +56,6 @@ const App = () => {
       }); // set model & input shape
 
       tf.dispose([warmupResults, dummyInput]); // cleanup memory
-      
       if (initialLoadTime === null) {
         setInitialLoadTime(loadDuration); // сохранить время первой загрузки
         const dataInitial = {
@@ -124,9 +123,9 @@ const App = () => {
 
         {device === null ?
           <>
-            Please enter your device model
+            <b>Please enter your device model</b>
             <input onChange={e => setDeviceInput(e.target.value)}/>
-            <button onClick={handleDeviceSave}>Save</button>
+            <button onClick={handleDeviceSave}>Submit</button>
           </>
         :
         <>
@@ -171,7 +170,7 @@ const App = () => {
           </div>
         </div>
 
-        <ButtonHandler imageRef={imageRef} cameraRef={cameraRef} videoRef={videoRef} />
+        <ButtonHandler imageRef={imageRef} closeImage={closeImage} cameraRef={cameraRef} videoRef={videoRef} />
           <div className="info-panel">
             <div className="info-item">
               <span className="info-label">Detection Time:</span>
