@@ -4,6 +4,8 @@ import "@tensorflow/tfjs-backend-webgl"; // set backend to webgl
 import Loader from "./components/loader";
 import ButtonHandler from "./components/btn-handler";
 import { detect, detectVideo } from "./utils/detect";
+import { client } from "./utils/pocketbase";
+import labels from "./utils/labels.json";
 import "./style/App.css";
 
 const App = () => {
@@ -16,6 +18,7 @@ const App = () => {
   const [loadTime, setLoadTime] = useState(0); // время загрузки модели
   const [initialLoadTime, setInitialLoadTime] = useState(null); // время первой загрузки
   const [selectedModel, setSelectedModel] = useState("yolo11n"); // выбранная модель
+  const [device, setDevice] = useState("m1 max"); // выбранная модель
 
   // references
   const imageRef = useRef(null);
@@ -40,11 +43,6 @@ const App = () => {
       const endLoadTime = performance.now(); // конец замера времени загрузки
       const loadDuration = endLoadTime - startLoadTime;
 
-      if (initialLoadTime === null) {
-        setInitialLoadTime(loadDuration); // сохранить время первой загрузки
-      } else {
-        setLoadTime(loadDuration); // сохранить время последующей загрузки
-      }
 
       // warming up model
       const dummyInput = tf.ones(yoloModel.inputs[0].shape);
@@ -57,6 +55,23 @@ const App = () => {
       }); // set model & input shape
 
       tf.dispose([warmupResults, dummyInput]); // cleanup memory
+      
+      if (initialLoadTime === null) {
+        setInitialLoadTime(loadDuration); // сохранить время первой загрузки
+        const data = {
+          "device": device,
+          "time": loadDuration.toFixed(2)
+        }
+        client.collection('initialLoad').create(data);
+      } else {
+        setLoadTime(loadDuration); // сохранить время последующей загрузк
+        const data = {
+          "device": device,
+          "model": selectedModel,
+          "time": loadDuration.toFixed(2)
+        }
+        client.collection('modelLoad').create(data);
+      }
     };
 
     tf.ready().then(loadModel);
@@ -68,9 +83,21 @@ const App = () => {
 
   const handleImageLoad = async () => {
     const startTime = performance.now();
-    await detect(imageRef.current, model, canvasRef.current);
+    const res = await detect(imageRef.current, model, canvasRef.current);
     const endTime = performance.now();
-    setDetectionTime(endTime - startTime);
+    const resTime = (endTime - startTime)
+    setDetectionTime(resTime);
+
+    const safeValue = (value) => (value === undefined || value === null ? "-" : value);
+
+    const data = {
+      device: safeValue(device),
+      class: safeValue(labels?.[res.classes[0]]),
+      precission: safeValue(res?.scores?.[0]?.toFixed(2)),
+      timeMs: safeValue(resTime),
+      model: safeValue(selectedModel),
+    };
+    await client.collection('imageRecognition').create(data);
   };
 
   const handleVideoPlay = async (video) => {
