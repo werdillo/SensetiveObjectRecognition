@@ -72,26 +72,27 @@ const App = () => {
     const endTime = performance.now();
     setDetectionTime(endTime - startTime);
   };
-
+  const models = ["yolo11n", "yolo11s", "yolo11m"];
   return (
     <div className="App">
       {loading.loading && <Loader>Loading model... {(loading.progress * 100).toFixed(2)}%</Loader>}
-      <p>
-        Model: <code className="code">{selectedModel}</code>
-      </p>
-
       {/* Тумблер выбора модели */}
       <label htmlFor="model-selector">Select Model:</label>
-      <select
-        id="model-selector"
-        value={selectedModel}
-        onChange={handleModelChange}
-        disabled={loading.loading} // блокировка выбора во время загрузки
-      >
-        <option value="yolo11n">YOLO 11n</option>
-        <option value="yolo11s">YOLO 11s</option>
-        <option value="yolo11m">YOLO 11m</option>
-      </select>
+      <div className="buttons-wrapper">
+        {models.map((model) => (
+          <button
+            key={model}
+            onClick={() => handleModelChange({ target: { value: model } })}
+            disabled={loading.loading} // Блокировка во время загрузки
+            style={{
+              backgroundColor: selectedModel === model ? "#007bff" : "#f8f9fa", // Синяя кнопка для выбранной модели
+              color: selectedModel === model ? "#fff" : "#000", // Белый текст для выбранной модели
+            }}
+          >
+            {model.toUpperCase()} {/* Отображаем имя модели */}
+          </button>
+        ))}
+      </div>
 
       {loadTime > 0 && (
         <p>

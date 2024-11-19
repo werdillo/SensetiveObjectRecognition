@@ -12,6 +12,10 @@
   margin: 3px 0;
 }
 
+.buttons-wrapper {
+  display: flex;
+  gap:20px;
+}
 
 .code {
   padding: 5px;
