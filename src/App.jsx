@@ -14,7 +14,7 @@ const App = () => {
   }); // init model & input shape
   const [detectionTime, setDetectionTime] = useState(0); // state for storing detection time
   const [loadTime, setLoadTime] = useState(0); // время загрузки модели
-  const [selectedModel, setSelectedModel] = useState("yolo11s"); // выбранная модель
+  const [selectedModel, setSelectedModel] = useState("yolo11n"); // выбранная модель
 
   // references
   const imageRef = useRef(null);
@@ -75,60 +75,63 @@ const App = () => {
   const models = ["yolo11n", "yolo11s", "yolo11m"];
   return (
     <div className="App">
-      {loading.loading && <Loader>Loading model... {(loading.progress * 100).toFixed(2)}%</Loader>}
-      {/* Тумблер выбора модели */}
-      <label htmlFor="model-selector">Select Model:</label>
-      <div className="buttons-wrapper">
-        {models.map((model) => (
-          <button
-            key={model}
-            onClick={() => handleModelChange({ target: { value: model } })}
-            disabled={loading.loading} // Блокировка во время загрузки
-            style={{
-              backgroundColor: selectedModel === model ? "#007bff" : "#f8f9fa", // Синяя кнопка для выбранной модели
-              color: selectedModel === model ? "#fff" : "#000", // Белый текст для выбранной модели
-            }}
-          >
-            {model.toUpperCase()} {/* Отображаем имя модели */}
-          </button>
-        ))}
-      </div>
-
-      {loadTime > 0 && (
-        <p>
-          Model load time: <strong>{loadTime.toFixed(2)} ms</strong>
-        </p>
-      )}
-
-      <div className="content">
-        <img
-          src="#"
-          ref={imageRef}
-          onLoad={handleImageLoad} // вызов функции обработки изображения
-        />
-        <video
-          autoPlay
-          muted
-          ref={cameraRef}
-          onPlay={() => handleVideoPlay(cameraRef.current)} // вызов функции обработки видео
-        />
-        <video
-          autoPlay
-          muted
-          ref={videoRef}
-          onPlay={() => handleVideoPlay(videoRef.current)} // вызов функции обработки видео
-        />
-        <canvas width={model.inputShape[1]} height={model.inputShape[2]} ref={canvasRef} />
-      </div>
-
-      <ButtonHandler imageRef={imageRef} cameraRef={cameraRef} videoRef={videoRef} />
-
-      {detectionTime > 0 && (
-        <div className="detection-time">
-          <p>Time taken for detection: {detectionTime.toFixed(2)} ms</p>
+        {loading.loading && <Loader>Loading model... {(loading.progress * 100).toFixed(2)}%</Loader>}
+      <div className="card">
+        <div className="card-content">
+        <h2>Select Model:</h2>
+        <div className="buttons-wrapper">
+          {models.map((model) => (
+            <button
+              key={model}
+              onClick={() => handleModelChange({ target: { value: model } })}
+              disabled={loading.loading} // Блокировка во время загрузки
+              style={{
+                backgroundColor: selectedModel === model ? "#007bff" : "#f8f9fa", // Синяя кнопка для выбранной модели
+                color: selectedModel === model ? "#fff" : "#000", // Белый текст для выбранной модели
+              }}
+            >
+              {model.toUpperCase()} {/* Отображаем имя модели */}
+            </button>
+          ))}
         </div>
-      )}
+
+
+
+        <div className="content">
+          <img
+            src="#"
+            ref={imageRef}
+            onLoad={handleImageLoad} // вызов функции обработки изображения
+          />
+          <video
+            autoPlay
+            muted
+            ref={cameraRef}
+            onPlay={() => handleVideoPlay(cameraRef.current)} // вызов функции обработки видео
+          />
+          <video
+            autoPlay
+            muted
+            ref={videoRef}
+            onPlay={() => handleVideoPlay(videoRef.current)} // вызов функции обработки видео
+          />
+          <canvas width={model.inputShape[1]} height={model.inputShape[2]} ref={canvasRef} />
+        </div>
+
+        <ButtonHandler imageRef={imageRef} cameraRef={cameraRef} videoRef={videoRef} />
+          <div className="info-panel">
+            <div className="info-item">
+              <span className="info-label">Detection Time:</span>
+              <span className="info-value">{detectionTime.toFixed(2)} ms</span>
+            </div>
+            <div className="info-item">
+              <span className="info-label">Model Load Time:</span>
+              <span className="info-value">{loadTime.toFixed(2)} ms</span>
+            </div>
+          </div>
+      </div>
     </div>
+  </div>
   );
 };
 

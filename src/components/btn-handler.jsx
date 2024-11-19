@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { Webcam } from "../utils/webcam";
+import "../style/App.css";
 
 const ButtonHandler = ({ imageRef, cameraRef, videoRef }) => {
   const [streaming, setStreaming] = useState(null); // streaming state
@@ -25,6 +26,7 @@ const ButtonHandler = ({ imageRef, cameraRef, videoRef }) => {
         type="file"
         accept="image/*"
         style={{ display: "none" }}
+        className="button upload-button"
         onChange={(e) => {
           const url = URL.createObjectURL(e.target.files[0]); // create blob url
           imageRef.current.src = url; // set video source
@@ -42,6 +44,7 @@ const ButtonHandler = ({ imageRef, cameraRef, videoRef }) => {
           else alert(`Can't handle more than 1 stream\nCurrently streaming : ${streaming}`); // if streaming video or webcam
         }}
       >
+        <span className="upload-icon">📤 </span>
         {streaming === "image" ? "Close" : "Open"} Image
       </button>
 
