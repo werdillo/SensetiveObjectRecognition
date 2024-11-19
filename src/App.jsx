@@ -58,11 +58,11 @@ const App = () => {
       
       if (initialLoadTime === null) {
         setInitialLoadTime(loadDuration); // сохранить время первой загрузки
-        const data = {
+        const dataInitial = {
           "device": device,
-          "time": loadDuration.toFixed(2)
+          "timeMs": loadDuration.toFixed(2)
         }
-        client.collection('initialLoad').create(data);
+        client.collection('initialLoad').create(dataInitial);
       } else {
         setLoadTime(loadDuration); // сохранить время последующей загрузк
         const data = {
@@ -130,26 +130,27 @@ const App = () => {
         </div>
 
 
-
-        <div className="content">
-          <img
-            src="#"
-            ref={imageRef}
-            onLoad={handleImageLoad} // вызов функции обработки изображения
-          />
-          <video
-            autoPlay
-            muted
-            ref={cameraRef}
-            onPlay={() => handleVideoPlay(cameraRef.current)} // вызов функции обработки видео
-          />
-          <video
-            autoPlay
-            muted
-            ref={videoRef}
-            onPlay={() => handleVideoPlay(videoRef.current)} // вызов функции обработки видео
-          />
-          <canvas width={model.inputShape[1]} height={model.inputShape[2]} ref={canvasRef} />
+        <div className="content-container ">
+          <div className="content">
+            <img
+              src="#"
+              ref={imageRef}
+              onLoad={handleImageLoad} // вызов функции обработки изображения
+            />
+            <video
+              autoPlay
+              muted
+              ref={cameraRef}
+              onPlay={() => handleVideoPlay(cameraRef.current)} // вызов функции обработки видео
+            />
+            <video
+              autoPlay
+              muted
+              ref={videoRef}
+              onPlay={() => handleVideoPlay(videoRef.current)} // вызов функции обработки видео
+            />
+            <canvas width={model.inputShape[1]} height={model.inputShape[2]} ref={canvasRef} />
+          </div>
         </div>
 
         <ButtonHandler imageRef={imageRef} cameraRef={cameraRef} videoRef={videoRef} />
