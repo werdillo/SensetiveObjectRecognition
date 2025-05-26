@@ -1,7 +1,7 @@
 // lib/pocketbase.js
 import PocketBase from 'pocketbase';
 
-const url = 'https://tensorflow-js-data.pockethost.io/';
+const url = 'https://objectbenchmark.pockethost.io/'
 export const client = new PocketBase(url);
 
 export const getImageUrl = (item) => {
