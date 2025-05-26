@@ -54,44 +54,71 @@ const ModelBenchmark = ({ device, client, labels }) => {
     'signature8.jpg',
     'signature9.jpg',
     'signature10.jpg',
-    // Добавьте сюда имена ваших тестовых изображений
   ];
 
   const loadModel = async (modelName) => {
-    const startTime = performance.now();
-    
-    const model = await tf.loadGraphModel(
-      `/${modelName}_web_model/model.json`
-    );
-    
-    // Warming up
-    const dummyInput = tf.ones(model.inputs[0].shape);
-    const warmupResults = model.execute(dummyInput);
-    tf.dispose([warmupResults, dummyInput]);
-    
-    const loadTime = performance.now() - startTime;
-    
-    return {
-      net: model,
-      inputShape: model.inputs[0].shape,
-      loadTime: loadTime
-    };
+    try {
+      setCurrentStatus(`Loading ${modelName}...`);
+      
+      // НАЧИНАЕМ замер времени только здесь
+      const startTime = performance.now();
+      
+      const model = await tf.loadGraphModel(
+        `/${modelName}_web_model/model.json`
+      );
+      
+      setCurrentStatus(`Warming up ${modelName}...`);
+      
+      // ИСПРАВЛЕННЫЙ warming up
+      const dummyInput = tf.ones(model.inputs[0].shape);
+      const warmupResults = model.execute(dummyInput);
+      
+      // Правильная очистка тензоров
+      if (Array.isArray(warmupResults)) {
+        warmupResults.forEach(tensor => tensor.dispose());
+      } else {
+        warmupResults.dispose();
+      }
+      dummyInput.dispose();
+      
+      // ЗАКАНЧИВАЕМ замер времени здесь (до очистки памяти)
+      const loadTime = performance.now() - startTime;
+      
+      return {
+        net: model,
+        inputShape: model.inputs[0].shape,
+        loadTime: loadTime
+      };
+    } catch (error) {
+      console.error(`Failed to load model ${modelName}:`, error);
+      throw error;
+    }
   };
 
   const detectImage = async (image, model, canvasRef) => {
     const startTime = performance.now();
     
-    // Используем вашу функцию detect
-    const result = await detect(image, model, canvasRef.current);
-    
-    const detectionTime = performance.now() - startTime;
-    
-    return {
-      time: detectionTime,
-      score: result.scores?.[0] || 0,
-      class: result.classes?.[0] || -1,
-      detections: result.scores?.length || 0
-    };
+    try {
+      // Используем вашу функцию detect
+      const result = await detect(image, model, canvasRef.current);
+      
+      const detectionTime = performance.now() - startTime;
+      
+      return {
+        time: detectionTime,
+        score: result.scores?.[0] || 0,
+        class: result.classes?.[0] || -1,
+        detections: result.scores?.length || 0
+      };
+    } catch (error) {
+      console.error(`Detection error:`, error);
+      return {
+        time: 0,
+        score: 0,
+        class: -1,
+        detections: 0
+      };
+    }
   };
 
   const loadImage = (src) => {
@@ -101,6 +128,21 @@ const ModelBenchmark = ({ device, client, labels }) => {
       img.onerror = () => reject(`Failed to load ${src}`);
       img.src = src;
     });
+  };
+
+  // Функция принудительной очистки памяти
+  const forceGarbageCollection = async () => {
+    // Принудительная очистка памяти TensorFlow.js
+    await tf.nextFrame();
+    
+    // Проверяем использование памяти
+    const memInfo = tf.memory();
+    console.log(`Memory: ${memInfo.numTensors} tensors, ${(memInfo.numBytes / 1024 / 1024).toFixed(1)} MB`);
+    
+    // Если много тензоров - ждем еще кадр
+    if (memInfo.numTensors > 50) {
+      await tf.nextFrame();
+    }
   };
 
   // Функция для сохранения результатов в PocketBase
@@ -149,9 +191,12 @@ const ModelBenchmark = ({ device, client, labels }) => {
     let currentTest = 0;
     
     for (const modelName of models) {
-      setCurrentStatus(`Loading model: ${modelName}`);
-      
       try {
+        // Принудительная очистка памяти перед загрузкой новой модели
+        // НЕ ВКЛЮЧАЕТСЯ в время загрузки модели
+        setCurrentStatus(`Preparing memory for ${modelName}...`);
+        await forceGarbageCollection();
+        
         const model = await loadModel(modelName);
         const modelResults = {
           model: modelName,
@@ -179,19 +224,6 @@ const ModelBenchmark = ({ device, client, labels }) => {
             modelResults.images.push(imageResult);
             modelResults.totalDetections += result.detections;
             
-            // Убираем сохранение индивидуальных результатов - сохраняем только итоговую сводку
-            // if (client) {
-            //   await client.collection('benchmarkResults').create({
-            //     device: device,
-            //     model: modelName,
-            //     imageName: imageFile,
-            //     detectionTimeMs: result.time.toFixed(2),
-            //     score: result.score.toFixed(4),
-            //     class: imageResult.className,
-            //     detections: result.detections,
-            //     timestamp: new Date().toISOString()
-            //   });
-            // }
           } catch (imgError) {
             console.error(`Error processing ${imageFile}:`, imgError);
           }
@@ -211,11 +243,26 @@ const ModelBenchmark = ({ device, client, labels }) => {
         
         benchmarkResults.push(modelResults);
         
-        // Очистка модели
+        // ВАЖНО: Правильная очистка модели (НЕ включается в время загрузки следующей модели)
+        setCurrentStatus(`Cleaning up ${modelName}...`);
         model.net.dispose();
+        
+        // Принудительная очистка памяти после каждой модели
+        // НЕ ВКЛЮЧАЕТСЯ в время загрузки следующей модели
+        await forceGarbageCollection();
         
       } catch (error) {
         console.error(`Error with model ${modelName}:`, error);
+        // Добавляем пустой результат для неудачной модели
+        benchmarkResults.push({
+          model: modelName,
+          loadTime: 0,
+          avgDetectionTime: 0,
+          avgScore: 0,
+          totalDetections: 0,
+          images: [],
+          error: error.message
+        });
       }
     }
     
@@ -255,6 +302,17 @@ const ModelBenchmark = ({ device, client, labels }) => {
       backgroundColor: '#f9f9f9'
     }}>
       <h2 style={{ marginBottom: '20px' }}>🚀 YOLO Model Benchmark</h2>
+      
+      {/* Информация о памяти для отладки */}
+      <div style={{ 
+        marginBottom: '15px', 
+        padding: '8px', 
+        backgroundColor: '#e9ecef', 
+        borderRadius: '4px',
+        fontSize: '12px'
+      }}>
+        <strong>Memory:</strong> {tf.memory().numTensors} tensors, {(tf.memory().numBytes / 1024 / 1024).toFixed(1)} MB
+      </div>
       
       <div style={{ marginBottom: '20px', textAlign: 'center' }}>
         <button 
@@ -342,7 +400,10 @@ const ModelBenchmark = ({ device, client, labels }) => {
             <tbody>
               {results.map((result, index) => (
                 <tr key={index} style={{ borderBottom: '1px solid #dee2e6' }}>
-                  <td style={{ padding: '12px', fontWeight: 'bold' }}>{result.model.toUpperCase()}</td>
+                  <td style={{ padding: '12px', fontWeight: 'bold' }}>
+                    {result.model.toUpperCase()}
+                    {result.error && <span style={{ color: 'red', fontSize: '12px' }}> (Error)</span>}
+                  </td>
                   <td style={{ padding: '12px', textAlign: 'center' }}>{result.loadTime.toFixed(2)}</td>
                   <td style={{ padding: '12px', textAlign: 'center' }}>
                     <span style={{
