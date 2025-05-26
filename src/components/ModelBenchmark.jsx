@@ -8,7 +8,20 @@ const ModelBenchmark = ({ device, client, labels }) => {
   const [progress, setProgress] = useState(0);
   const [currentStatus, setCurrentStatus] = useState('');
   const [results, setResults] = useState([]);
+  const [isMobile, setIsMobile] = useState(false);
   const canvasRef = useRef(null);
+
+  // Определяем мобильное устройство
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   const models = ['yolo11n', 'yolo11s', 'yolo11m'];
   
@@ -60,26 +73,45 @@ const ModelBenchmark = ({ device, client, labels }) => {
     try {
       setCurrentStatus(`Loading ${modelName}...`);
       
+      // Проверяем доступную память перед загрузкой больших моделей
+      const memBefore = tf.memory();
+      if (modelName === 'yolo11m' && memBefore.numTensors > 10) {
+        setCurrentStatus(`Preparing memory for ${modelName}...`);
+        await forceGarbageCollection();
+      }
+      
       // НАЧИНАЕМ замер времени только здесь
       const startTime = performance.now();
       
       const model = await tf.loadGraphModel(
-        `/${modelName}_web_model/model.json`
+        `/${modelName}_web_model/model.json`,
+        {
+          fetchOptions: {
+            cache: 'no-cache' // Отключаем кэш для честного тестирования
+          }
+        }
       );
       
       setCurrentStatus(`Warming up ${modelName}...`);
       
-      // ИСПРАВЛЕННЫЙ warming up
+      // Осторожный warming up для больших моделей на iOS
       const dummyInput = tf.ones(model.inputs[0].shape);
       const warmupResults = model.execute(dummyInput);
       
       // Правильная очистка тензоров
       if (Array.isArray(warmupResults)) {
-        warmupResults.forEach(tensor => tensor.dispose());
-      } else {
+        warmupResults.forEach(tensor => {
+          if (tensor && typeof tensor.dispose === 'function') {
+            tensor.dispose();
+          }
+        });
+      } else if (warmupResults && typeof warmupResults.dispose === 'function') {
         warmupResults.dispose();
       }
-      dummyInput.dispose();
+      
+      if (dummyInput && typeof dummyInput.dispose === 'function') {
+        dummyInput.dispose();
+      }
       
       // ЗАКАНЧИВАЕМ замер времени здесь (до очистки памяти)
       const loadTime = performance.now() - startTime;
@@ -91,6 +123,12 @@ const ModelBenchmark = ({ device, client, labels }) => {
       };
     } catch (error) {
       console.error(`Failed to load model ${modelName}:`, error);
+      
+      // Специальная обработка для больших моделей на мобильных устройствах
+      if (modelName === 'yolo11m' && (navigator.userAgent.includes('iPhone') || navigator.userAgent.includes('iPad'))) {
+        throw new Error(`Model ${modelName} requires too much memory for this device`);
+      }
+      
       throw error;
     }
   };
@@ -130,18 +168,26 @@ const ModelBenchmark = ({ device, client, labels }) => {
     });
   };
 
-  // Функция принудительной очистки памяти
+  // Функция принудительной очистки памяти с дополнительными проверками
   const forceGarbageCollection = async () => {
     // Принудительная очистка памяти TensorFlow.js
     await tf.nextFrame();
+    await tf.nextFrame(); // Двойная очистка для iOS
     
     // Проверяем использование памяти
     const memInfo = tf.memory();
     console.log(`Memory: ${memInfo.numTensors} tensors, ${(memInfo.numBytes / 1024 / 1024).toFixed(1)} MB`);
     
-    // Если много тензоров - ждем еще кадр
-    if (memInfo.numTensors > 50) {
+    // Если много тензоров - ждем еще несколько кадров
+    if (memInfo.numTensors > 20) {
       await tf.nextFrame();
+      await tf.nextFrame();
+      await tf.nextFrame();
+    }
+    
+    // Дополнительная пауза для iOS
+    if (navigator.userAgent.includes('iPhone') || navigator.userAgent.includes('iPad')) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
   };
 
@@ -192,10 +238,25 @@ const ModelBenchmark = ({ device, client, labels }) => {
     
     for (const modelName of models) {
       try {
-        // Принудительная очистка памяти перед загрузкой новой модели
-        // НЕ ВКЛЮЧАЕТСЯ в время загрузки модели
+        // Дополнительная очистка памяти перед каждой моделью
         setCurrentStatus(`Preparing memory for ${modelName}...`);
         await forceGarbageCollection();
+        
+        // Проверяем память перед загрузкой yolo11m
+        const memInfo = tf.memory();
+        if (modelName === 'yolo11m' && memInfo.numBytes > 100 * 1024 * 1024) { // Больше 100MB
+          setCurrentStatus(`Insufficient memory for ${modelName}, skipping...`);
+          benchmarkResults.push({
+            model: modelName,
+            loadTime: 0,
+            avgDetectionTime: 0,
+            avgScore: 0,
+            totalDetections: 0,
+            images: [],
+            error: 'Insufficient memory'
+          });
+          continue;
+        }
         
         const model = await loadModel(modelName);
         const modelResults = {
@@ -245,15 +306,20 @@ const ModelBenchmark = ({ device, client, labels }) => {
         
         // ВАЖНО: Правильная очистка модели (НЕ включается в время загрузки следующей модели)
         setCurrentStatus(`Cleaning up ${modelName}...`);
-        model.net.dispose();
+        if (model.net && typeof model.net.dispose === 'function') {
+          model.net.dispose();
+        }
         
-        // Принудительная очистка памяти после каждой модели
-        // НЕ ВКЛЮЧАЕТСЯ в время загрузки следующей модели
+        // Принудительная очистка памяти после каждой модели (особенно важно для iOS)
         await forceGarbageCollection();
         
       } catch (error) {
         console.error(`Error with model ${modelName}:`, error);
-        // Добавляем пустой результат для неудачной модели
+        
+        // Специальная обработка для ошибок памяти на iOS
+        const isMemoryError = error.message.includes('memory') || error.message.includes('Memory') || 
+                            error.message.includes('allocation') || error.name === 'RangeError';
+        
         benchmarkResults.push({
           model: modelName,
           loadTime: 0,
@@ -261,8 +327,14 @@ const ModelBenchmark = ({ device, client, labels }) => {
           avgScore: 0,
           totalDetections: 0,
           images: [],
-          error: error.message
+          error: isMemoryError ? 'Out of memory' : error.message
         });
+        
+        // Если ошибка памяти на большой модели - пропускаем остальные большие модели
+        if (isMemoryError && modelName === 'yolo11m') {
+          setCurrentStatus('Memory limit reached, stopping benchmark...');
+          break;
+        }
       }
     }
     
@@ -380,54 +452,128 @@ const ModelBenchmark = ({ device, client, labels }) => {
       {results.length > 0 && !isRunning && (
         <div>
           <h3>📊 Benchmark Results</h3>
-          <table style={{ 
-            width: '100%', 
-            borderCollapse: 'collapse',
-            backgroundColor: 'white',
-            borderRadius: '8px',
-            overflow: 'hidden',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-          }}>
-            <thead>
-              <tr style={{ backgroundColor: '#f8f9fa' }}>
-                <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>Model</th>
-                <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #dee2e6' }}>Load Time (ms)</th>
-                <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #dee2e6' }}>Avg Detection (ms)</th>
-                <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #dee2e6' }}>Avg Accuracy</th>
-                <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #dee2e6' }}>Total Detections</th>
-              </tr>
-            </thead>
-            <tbody>
+          
+          {/* Показываем карточки на мобильных устройствах */}
+          {isMobile ? (
+            <div>
               {results.map((result, index) => (
-                <tr key={index} style={{ borderBottom: '1px solid #dee2e6' }}>
-                  <td style={{ padding: '12px', fontWeight: 'bold' }}>
-                    {result.model.toUpperCase()}
-                    {result.error && <span style={{ color: 'red', fontSize: '12px' }}> (Error)</span>}
-                  </td>
-                  <td style={{ padding: '12px', textAlign: 'center' }}>{result.loadTime.toFixed(2)}</td>
-                  <td style={{ padding: '12px', textAlign: 'center' }}>
-                    <span style={{
-                      backgroundColor: result.avgDetectionTime < 50 ? '#d4edda' : result.avgDetectionTime < 100 ? '#fff3cd' : '#f8d7da',
-                      padding: '4px 8px',
-                      borderRadius: '4px'
-                    }}>
-                      {result.avgDetectionTime.toFixed(2)}
-                    </span>
-                  </td>
-                  <td style={{ padding: '12px', textAlign: 'center' }}>
-                    <span style={{
-                      backgroundColor: result.avgScore > 0.8 ? '#d4edda' : result.avgScore > 0.6 ? '#fff3cd' : '#f8d7da',
-                      padding: '4px 8px',
-                      borderRadius: '4px'
-                    }}>
-                      {(result.avgScore * 100).toFixed(1)}%
-                    </span>
-                  </td>
-                  <td style={{ padding: '12px', textAlign: 'center' }}>{result.totalDetections}</td>
-                </tr>
+                <div key={index} style={{
+                  backgroundColor: 'white',
+                  borderRadius: '8px',
+                  padding: '15px',
+                  marginBottom: '15px',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                  border: '1px solid #dee2e6'
+                }}>
+                  <div style={{ 
+                    fontSize: '18px', 
+                    fontWeight: 'bold', 
+                    marginBottom: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                  }}>
+                    <span>{result.model.toUpperCase()}</span>
+                    {result.error && <span style={{ color: 'red', fontSize: '12px' }}>ERROR</span>}
+                  </div>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '14px' }}>
+                    <div>
+                      <div style={{ color: '#666', marginBottom: '4px' }}>Load Time</div>
+                      <div style={{ fontWeight: 'bold' }}>{result.loadTime.toFixed(2)} ms</div>
+                    </div>
+                    
+                    <div>
+                      <div style={{ color: '#666', marginBottom: '4px' }}>Avg Detection</div>
+                      <div>
+                        <span style={{
+                          backgroundColor: result.avgDetectionTime < 50 ? '#d4edda' : result.avgDetectionTime < 100 ? '#fff3cd' : '#f8d7da',
+                          padding: '3px 6px',
+                          borderRadius: '4px',
+                          fontSize: '13px',
+                          fontWeight: 'bold'
+                        }}>
+                          {result.avgDetectionTime.toFixed(2)} ms
+                        </span>
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <div style={{ color: '#666', marginBottom: '4px' }}>Accuracy</div>
+                      <div>
+                        <span style={{
+                          backgroundColor: result.avgScore > 0.8 ? '#d4edda' : result.avgScore > 0.6 ? '#fff3cd' : '#f8d7da',
+                          padding: '3px 6px',
+                          borderRadius: '4px',
+                          fontSize: '13px',
+                          fontWeight: 'bold'
+                        }}>
+                          {(result.avgScore * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <div style={{ color: '#666', marginBottom: '4px' }}>Detections</div>
+                      <div style={{ fontWeight: 'bold' }}>{result.totalDetections}</div>
+                    </div>
+                  </div>
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+          ) : (
+            /* Показываем таблицу на десктопе */
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ 
+                width: '100%', 
+                borderCollapse: 'collapse',
+                backgroundColor: 'white',
+                borderRadius: '8px',
+                overflow: 'hidden',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+              }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f8f9fa' }}>
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>Model</th>
+                    <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #dee2e6' }}>Load Time (ms)</th>
+                    <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #dee2e6' }}>Avg Detection (ms)</th>
+                    <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #dee2e6' }}>Avg Accuracy</th>
+                    <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #dee2e6' }}>Total Detections</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.map((result, index) => (
+                    <tr key={index} style={{ borderBottom: '1px solid #dee2e6' }}>
+                      <td style={{ padding: '12px', fontWeight: 'bold' }}>
+                        {result.model.toUpperCase()}
+                        {result.error && <span style={{ color: 'red', fontSize: '12px' }}> (Error)</span>}
+                      </td>
+                      <td style={{ padding: '12px', textAlign: 'center' }}>{result.loadTime.toFixed(2)}</td>
+                      <td style={{ padding: '12px', textAlign: 'center' }}>
+                        <span style={{
+                          backgroundColor: result.avgDetectionTime < 50 ? '#d4edda' : result.avgDetectionTime < 100 ? '#fff3cd' : '#f8d7da',
+                          padding: '4px 8px',
+                          borderRadius: '4px'
+                        }}>
+                          {result.avgDetectionTime.toFixed(2)}
+                        </span>
+                      </td>
+                      <td style={{ padding: '12px', textAlign: 'center' }}>
+                        <span style={{
+                          backgroundColor: result.avgScore > 0.8 ? '#d4edda' : result.avgScore > 0.6 ? '#fff3cd' : '#f8d7da',
+                          padding: '4px 8px',
+                          borderRadius: '4px'
+                        }}>
+                          {(result.avgScore * 100).toFixed(1)}%
+                        </span>
+                      </td>
+                      <td style={{ padding: '12px', textAlign: 'center' }}>{result.totalDetections}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           
           <div style={{ marginTop: '20px', textAlign: 'center', color: '#6c757d' }}>
             <small>✅ Benchmark completed on {imageFiles.length} images across {models.length} models</small>
