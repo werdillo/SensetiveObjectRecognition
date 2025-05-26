@@ -9,9 +9,11 @@ const ModelBenchmark = ({ device, client, labels }) => {
   const [currentStatus, setCurrentStatus] = useState('');
   const [results, setResults] = useState([]);
   const [isMobile, setIsMobile] = useState(false);
+  const [memoryInfo, setMemoryInfo] = useState({ tensors: 0, bytes: 0 });
+  
   const canvasRef = useRef(null);
 
-  // Определяем мобильное устройство
+  // Определяем мобильное устройство и возможности
   useEffect(() => {
     const checkMobile = () => {
       setIsMobile(window.innerWidth <= 768);
@@ -20,100 +22,116 @@ const ModelBenchmark = ({ device, client, labels }) => {
     checkMobile();
     window.addEventListener('resize', checkMobile);
     
-    return () => window.removeEventListener('resize', checkMobile);
+    const memoryInterval = setInterval(() => {
+      const memory = tf.memory();
+      setMemoryInfo({ tensors: memory.numTensors, bytes: memory.numBytes });
+    }, 1000);
+    
+    return () => {
+      window.removeEventListener('resize', checkMobile);
+      clearInterval(memoryInterval);
+    };
   }, []);
 
+  // Проверка возможностей устройства
+  const getDeviceCapabilities = () => {
+    const memory = navigator.deviceMemory || 4;
+    const isLowEnd = memory < 4 || /iPhone|iPad|Android/i.test(navigator.userAgent);
+    const isIOS = /iPhone|iPad/i.test(navigator.userAgent);
+    
+    return {
+      isLowEnd,
+      isIOS,
+      maxMemory: isLowEnd ? 80 * 1024 * 1024 : 200 * 1024 * 1024, // 80MB или 200MB
+      gcDelay: isIOS ? 2000 : 1000
+    };
+  };
+
   const models = ['yolo11n', 'yolo11s', 'yolo11m'];
-  
-  // Предопределенный список тестовых изображений
   const imageFiles = [
-    'card1.png',
-    'card2.jpeg',
-    'card3.png',
-    'card4.jpg',
-    'card5.jpg',
-    'card6.jpg',
-    'card7.jpg',
-    'card8.jpg',
-    'card9.jpg',
-    'card10.jpg',
-    'id1.jpg',
-    'id2.jpg',
-    'id3.jpg',
-    'id4.jpg',
-    'id5.jpg',
-    'id6.jpg',
-    'id7.jpg',
-    'id8.jpg',
-    'id9.jpg',
-    'id10.jpg',
-    'face1.jpg',
-    'face2.jpg',
-    'face3.jpg',
-    'face4.jpg',
-    'face5.jpg',
-    'face6.jpg',
-    'face7.jpg',
-    'face8.jpg',
-    'face9.jpg',
-    'face10.jpg',
-    'signature1.jpg',
-    'signature2.jpg',
-    'signature3.jpg',
-    'signature4.jpg',
-    'signature5.jpg',
-    'signature6.jpg',
-    'signature7.jpg',
-    'signature8.jpg',
-    'signature9.jpg',
-    'signature10.jpg',
+    'card1.png', 'card2.jpeg', 'card3.png', 'card4.jpg', 'card5.jpg',
+    'card6.jpg', 'card7.jpg', 'card8.jpg', 'card9.jpg', 'card10.jpg',
+    'id1.jpg', 'id2.jpg', 'id3.jpg', 'id4.jpg', 'id5.jpg',
+    'id6.jpg', 'id7.jpg', 'id8.jpg', 'id9.jpg', 'id10.jpg',
+    'face1.jpg', 'face2.jpg', 'face3.jpg', 'face4.jpg', 'face5.jpg',
+    'face6.jpg', 'face7.jpg', 'face8.jpg', 'face9.jpg', 'face10.jpg',
+    'signature1.jpg', 'signature2.jpg', 'signature3.jpg', 'signature4.jpg', 'signature5.jpg',
+    'signature6.jpg', 'signature7.jpg', 'signature8.jpg', 'signature9.jpg', 'signature10.jpg',
   ];
+
+  // Улучшенная очистка памяти
+  const forceGarbageCollection = async () => {
+    const capabilities = getDeviceCapabilities();
+    
+    // Принудительная очистка всех тензоров
+    tf.dispose();
+    
+    // Множественные циклы GC
+    const cycles = capabilities.isIOS ? 6 : 4;
+    for (let i = 0; i < cycles; i++) {
+      await tf.nextFrame();
+    }
+    
+    // Дополнительная пауза для мобильных
+    if (capabilities.isLowEnd) {
+      await new Promise(resolve => setTimeout(resolve, capabilities.gcDelay));
+    }
+    
+    console.log(`Memory after cleanup: ${tf.memory().numTensors} tensors, ${(tf.memory().numBytes / 1024 / 1024).toFixed(1)} MB`);
+  };
+
+  // Проверка возможности загрузки модели
+  const canLoadModel = (modelName) => {
+    const capabilities = getDeviceCapabilities();
+    const currentMemory = tf.memory().numBytes;
+    
+    if (modelName === 'yolo11m' && (capabilities.isLowEnd || currentMemory > capabilities.maxMemory * 0.6)) {
+      return false;
+    }
+    if (modelName === 'yolo11s' && currentMemory > capabilities.maxMemory * 0.8) {
+      return false;
+    }
+    return true;
+  };
 
   const loadModel = async (modelName) => {
     try {
-      setCurrentStatus(`Loading ${modelName}...`);
+      setCurrentStatus(`Checking memory for ${modelName}...`);
       
-      // Проверяем доступную память перед загрузкой больших моделей
-      const memBefore = tf.memory();
-      if (modelName === 'yolo11m' && memBefore.numTensors > 10) {
-        setCurrentStatus(`Preparing memory for ${modelName}...`);
-        await forceGarbageCollection();
+      if (!canLoadModel(modelName)) {
+        throw new Error(`Model ${modelName} not supported on this device (insufficient memory)`);
       }
+
+      // Очистка памяти перед загрузкой
+      await forceGarbageCollection();
       
-      // НАЧИНАЕМ замер времени только здесь
+      setCurrentStatus(`Loading ${modelName}...`);
       const startTime = performance.now();
       
-      const model = await tf.loadGraphModel(
-        `/${modelName}_web_model/model.json`,
-        {
-          fetchOptions: {
-            cache: 'no-cache' // Отключаем кэш для честного тестирования
-          }
-        }
-      );
+      // Загрузка с таймаутом
+      const model = await Promise.race([
+        tf.loadGraphModel(`/${modelName}_web_model/model.json`, {
+          fetchOptions: { cache: 'no-cache' }
+        }),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Loading timeout')), 30000)
+        )
+      ]);
       
       setCurrentStatus(`Warming up ${modelName}...`);
       
-      // Осторожный warming up для больших моделей на iOS
+      // Безопасный warming up
       const dummyInput = tf.ones(model.inputs[0].shape);
       const warmupResults = model.execute(dummyInput);
       
-      // Правильная очистка тензоров
+      // Очистка результатов warming up
       if (Array.isArray(warmupResults)) {
-        warmupResults.forEach(tensor => {
-          if (tensor && typeof tensor.dispose === 'function') {
-            tensor.dispose();
-          }
-        });
-      } else if (warmupResults && typeof warmupResults.dispose === 'function') {
-        warmupResults.dispose();
+        warmupResults.forEach(tensor => tensor?.dispose?.());
+      } else {
+        warmupResults?.dispose?.();
       }
+      dummyInput.dispose();
       
-      if (dummyInput && typeof dummyInput.dispose === 'function') {
-        dummyInput.dispose();
-      }
-      
-      // ЗАКАНЧИВАЕМ замер времени здесь (до очистки памяти)
       const loadTime = performance.now() - startTime;
       
       return {
@@ -121,14 +139,10 @@ const ModelBenchmark = ({ device, client, labels }) => {
         inputShape: model.inputs[0].shape,
         loadTime: loadTime
       };
+      
     } catch (error) {
       console.error(`Failed to load model ${modelName}:`, error);
-      
-      // Специальная обработка для больших моделей на мобильных устройствах
-      if (modelName === 'yolo11m' && (navigator.userAgent.includes('iPhone') || navigator.userAgent.includes('iPad'))) {
-        throw new Error(`Model ${modelName} requires too much memory for this device`);
-      }
-      
+      await forceGarbageCollection();
       throw error;
     }
   };
@@ -137,8 +151,12 @@ const ModelBenchmark = ({ device, client, labels }) => {
     const startTime = performance.now();
     
     try {
-      // Используем вашу функцию detect
-      const result = await detect(image, model, canvasRef.current);
+      const result = await Promise.race([
+        detect(image, model, canvasRef.current),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Detection timeout')), 15000)
+        )
+      ]);
       
       const detectionTime = performance.now() - startTime;
       
@@ -151,10 +169,11 @@ const ModelBenchmark = ({ device, client, labels }) => {
     } catch (error) {
       console.error(`Detection error:`, error);
       return {
-        time: 0,
+        time: performance.now() - startTime,
         score: 0,
         class: -1,
-        detections: 0
+        detections: 0,
+        error: error.message
       };
     }
   };
@@ -162,36 +181,20 @@ const ModelBenchmark = ({ device, client, labels }) => {
   const loadImage = (src) => {
     return new Promise((resolve, reject) => {
       const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(`Failed to load ${src}`);
+      const timeout = setTimeout(() => reject(new Error('Image loading timeout')), 10000);
+      
+      img.onload = () => {
+        clearTimeout(timeout);
+        resolve(img);
+      };
+      img.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error(`Failed to load ${src}`));
+      };
       img.src = src;
     });
   };
 
-  // Функция принудительной очистки памяти с дополнительными проверками
-  const forceGarbageCollection = async () => {
-    // Принудительная очистка памяти TensorFlow.js
-    await tf.nextFrame();
-    await tf.nextFrame(); // Двойная очистка для iOS
-    
-    // Проверяем использование памяти
-    const memInfo = tf.memory();
-    console.log(`Memory: ${memInfo.numTensors} tensors, ${(memInfo.numBytes / 1024 / 1024).toFixed(1)} MB`);
-    
-    // Если много тензоров - ждем еще несколько кадров
-    if (memInfo.numTensors > 20) {
-      await tf.nextFrame();
-      await tf.nextFrame();
-      await tf.nextFrame();
-    }
-    
-    // Дополнительная пауза для iOS
-    if (navigator.userAgent.includes('iPhone') || navigator.userAgent.includes('iPad')) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  };
-
-  // Функция для сохранения результатов в PocketBase
   const saveBenchmarkSummary = async (benchmarkResults) => {
     try {
       setCurrentStatus('Saving to database...');
@@ -223,7 +226,7 @@ const ModelBenchmark = ({ device, client, labels }) => {
       
     } catch (error) {
       console.error('Save error:', error);
-      setCurrentStatus('Benchmark completed');
+      setCurrentStatus('Benchmark completed (save failed)');
     }
   };
 
@@ -233,70 +236,79 @@ const ModelBenchmark = ({ device, client, labels }) => {
     setProgress(0);
     
     const benchmarkResults = [];
-    const totalTests = models.length * imageFiles.length;
+    const capabilities = getDeviceCapabilities();
+    
+    // Ограничиваем изображения для слабых устройств
+    const testImages = capabilities.isLowEnd ? imageFiles.slice(0, 20) : imageFiles;
+    const totalTests = models.length * testImages.length;
     let currentTest = 0;
     
     for (const modelName of models) {
       try {
-        // Дополнительная очистка памяти перед каждой моделью
-        setCurrentStatus(`Preparing memory for ${modelName}...`);
-        await forceGarbageCollection();
-        
-        // Проверяем память перед загрузкой yolo11m
-        const memInfo = tf.memory();
-        if (modelName === 'yolo11m' && memInfo.numBytes > 100 * 1024 * 1024) { // Больше 100MB
-          setCurrentStatus(`Insufficient memory for ${modelName}, skipping...`);
-          benchmarkResults.push({
-            model: modelName,
-            loadTime: 0,
-            avgDetectionTime: 0,
-            avgScore: 0,
-            totalDetections: 0,
-            images: [],
-            error: 'Insufficient memory'
-          });
-          continue;
-        }
+        setCurrentStatus(`Starting ${modelName}...`);
         
         const model = await loadModel(modelName);
         const modelResults = {
           model: modelName,
           loadTime: model.loadTime,
           images: [],
-          totalDetections: 0
+          totalDetections: 0,
+          errors: 0
         };
         
-        for (const imageFile of imageFiles) {
+        for (const imageFile of testImages) {
           setCurrentStatus(`Testing ${modelName} on ${imageFile}`);
           
           try {
             const image = await loadImage(`/images/${imageFile}`);
             const result = await detectImage(image, model, canvasRef);
             
-            const imageResult = {
+            modelResults.images.push({
               imageName: imageFile,
               detectionTime: result.time,
               score: result.score,
               class: result.class,
               className: labels?.[result.class] || 'unknown',
-              detections: result.detections
-            };
+              detections: result.detections,
+              error: result.error
+            });
             
-            modelResults.images.push(imageResult);
             modelResults.totalDetections += result.detections;
+            if (result.error) modelResults.errors++;
+            
+            // Периодическая очистка памяти
+            if (currentTest % 10 === 0) {
+              await forceGarbageCollection();
+            }
             
           } catch (imgError) {
             console.error(`Error processing ${imageFile}:`, imgError);
+            modelResults.errors++;
+            modelResults.images.push({
+              imageName: imageFile,
+              detectionTime: 0,
+              score: 0,
+              class: -1,
+              className: 'error',
+              detections: 0,
+              error: imgError.message
+            });
           }
           
           currentTest++;
           setProgress((currentTest / totalTests) * 100);
+          
+          // Небольшая пауза для мобильных устройств
+          if (capabilities.isLowEnd && currentTest % 5 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
         }
         
         // Вычисление средних значений
-        if (modelResults.images.length > 0) {
-          modelResults.avgDetectionTime = modelResults.images.reduce((sum, img) => sum + img.detectionTime, 0) / modelResults.images.length;
-          modelResults.avgScore = modelResults.images.reduce((sum, img) => sum + img.score, 0) / modelResults.images.length;
+        const successfulImages = modelResults.images.filter(img => !img.error);
+        if (successfulImages.length > 0) {
+          modelResults.avgDetectionTime = successfulImages.reduce((sum, img) => sum + img.detectionTime, 0) / successfulImages.length;
+          modelResults.avgScore = successfulImages.reduce((sum, img) => sum + img.score, 0) / successfulImages.length;
         } else {
           modelResults.avgDetectionTime = 0;
           modelResults.avgScore = 0;
@@ -304,21 +316,16 @@ const ModelBenchmark = ({ device, client, labels }) => {
         
         benchmarkResults.push(modelResults);
         
-        // ВАЖНО: Правильная очистка модели (НЕ включается в время загрузки следующей модели)
+        // Очистка модели
         setCurrentStatus(`Cleaning up ${modelName}...`);
-        if (model.net && typeof model.net.dispose === 'function') {
+        if (model.net?.dispose) {
           model.net.dispose();
         }
         
-        // Принудительная очистка памяти после каждой модели (особенно важно для iOS)
         await forceGarbageCollection();
         
       } catch (error) {
         console.error(`Error with model ${modelName}:`, error);
-        
-        // Специальная обработка для ошибок памяти на iOS
-        const isMemoryError = error.message.includes('memory') || error.message.includes('Memory') || 
-                            error.message.includes('allocation') || error.name === 'RangeError';
         
         benchmarkResults.push({
           model: modelName,
@@ -327,24 +334,26 @@ const ModelBenchmark = ({ device, client, labels }) => {
           avgScore: 0,
           totalDetections: 0,
           images: [],
-          error: isMemoryError ? 'Out of memory' : error.message
+          errors: 1,
+          error: error.message
         });
         
-        // Если ошибка памяти на большой модели - пропускаем остальные большие модели
-        if (isMemoryError && modelName === 'yolo11m') {
-          setCurrentStatus('Memory limit reached, stopping benchmark...');
+        // Если ошибка памяти на большой модели - прекращаем
+        if (error.message.includes('memory') && modelName === 'yolo11m') {
+          setCurrentStatus('Memory limit reached, stopping...');
           break;
         }
       }
     }
     
     setResults(benchmarkResults);
-    
-    // Сохраняем сводные данные в PocketBase
     await saveBenchmarkSummary(benchmarkResults);
     
     setIsRunning(false);
     setProgress(0);
+    
+    // Финальная очистка
+    await forceGarbageCollection();
   };
 
   const exportResults = () => {
@@ -356,7 +365,6 @@ const ModelBenchmark = ({ device, client, labels }) => {
     
     const dataStr = JSON.stringify(exportData, null, 2);
     const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
-    
     const exportFileDefaultName = `benchmark_${device}_${new Date().getTime()}.json`;
     
     const linkElement = document.createElement('a');
@@ -375,15 +383,18 @@ const ModelBenchmark = ({ device, client, labels }) => {
     }}>
       <h2 style={{ marginBottom: '20px' }}>🚀 YOLO Model Benchmark</h2>
       
-      {/* Информация о памяти для отладки */}
+      {/* Информация о памяти */}
       <div style={{ 
         marginBottom: '15px', 
         padding: '8px', 
-        backgroundColor: '#e9ecef', 
+        backgroundColor: memoryInfo.bytes > 150 * 1024 * 1024 ? '#ffebee' : '#e8f5e8', 
         borderRadius: '4px',
         fontSize: '12px'
       }}>
-        <strong>Memory:</strong> {tf.memory().numTensors} tensors, {(tf.memory().numBytes / 1024 / 1024).toFixed(1)} MB
+        <strong>Memory:</strong> {memoryInfo.tensors} tensors, {(memoryInfo.bytes / 1024 / 1024).toFixed(1)} MB
+        {memoryInfo.bytes > 150 * 1024 * 1024 && (
+          <span style={{ color: 'red', marginLeft: '10px' }}>⚠️ High memory usage!</span>
+        )}
       </div>
       
       <div style={{ marginBottom: '20px', textAlign: 'center' }}>
@@ -398,7 +409,8 @@ const ModelBenchmark = ({ device, client, labels }) => {
             borderRadius: '6px',
             fontSize: '16px',
             cursor: isRunning ? 'not-allowed' : 'pointer',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+            marginRight: '10px'
           }}
         >
           {isRunning ? '⏳ Running Benchmark...' : '▶️ Start Benchmark'}
@@ -414,7 +426,6 @@ const ModelBenchmark = ({ device, client, labels }) => {
               border: 'none',
               borderRadius: '6px',
               fontSize: '16px',
-              marginLeft: '10px',
               cursor: 'pointer',
               boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
             }}
@@ -453,7 +464,6 @@ const ModelBenchmark = ({ device, client, labels }) => {
         <div>
           <h3>📊 Benchmark Results</h3>
           
-          {/* Показываем карточки на мобильных устройствах */}
           {isMobile ? (
             <div>
               {results.map((result, index) => (
@@ -463,7 +473,7 @@ const ModelBenchmark = ({ device, client, labels }) => {
                   padding: '15px',
                   marginBottom: '15px',
                   boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                  border: '1px solid #dee2e6'
+                  border: result.error ? '2px solid #f8d7da' : '1px solid #dee2e6'
                 }}>
                   <div style={{ 
                     fontSize: '18px', 
@@ -477,52 +487,57 @@ const ModelBenchmark = ({ device, client, labels }) => {
                     {result.error && <span style={{ color: 'red', fontSize: '12px' }}>ERROR</span>}
                   </div>
                   
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '14px' }}>
-                    <div>
-                      <div style={{ color: '#666', marginBottom: '4px' }}>Load Time</div>
-                      <div style={{ fontWeight: 'bold' }}>{result.loadTime.toFixed(2)} ms</div>
+                  {result.error ? (
+                    <div style={{ color: 'red', fontSize: '14px', fontStyle: 'italic' }}>
+                      {result.error}
                     </div>
-                    
-                    <div>
-                      <div style={{ color: '#666', marginBottom: '4px' }}>Avg Detection</div>
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '14px' }}>
                       <div>
-                        <span style={{
-                          backgroundColor: result.avgDetectionTime < 50 ? '#d4edda' : result.avgDetectionTime < 100 ? '#fff3cd' : '#f8d7da',
-                          padding: '3px 6px',
-                          borderRadius: '4px',
-                          fontSize: '13px',
-                          fontWeight: 'bold'
-                        }}>
-                          {result.avgDetectionTime.toFixed(2)} ms
-                        </span>
+                        <div style={{ color: '#666', marginBottom: '4px' }}>Load Time</div>
+                        <div style={{ fontWeight: 'bold' }}>{result.loadTime.toFixed(2)} ms</div>
+                      </div>
+                      
+                      <div>
+                        <div style={{ color: '#666', marginBottom: '4px' }}>Avg Detection</div>
+                        <div>
+                          <span style={{
+                            backgroundColor: result.avgDetectionTime < 50 ? '#d4edda' : result.avgDetectionTime < 100 ? '#fff3cd' : '#f8d7da',
+                            padding: '3px 6px',
+                            borderRadius: '4px',
+                            fontSize: '13px',
+                            fontWeight: 'bold'
+                          }}>
+                            {result.avgDetectionTime.toFixed(2)} ms
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <div style={{ color: '#666', marginBottom: '4px' }}>Accuracy</div>
+                        <div>
+                          <span style={{
+                            backgroundColor: result.avgScore > 0.8 ? '#d4edda' : result.avgScore > 0.6 ? '#fff3cd' : '#f8d7da',
+                            padding: '3px 6px',
+                            borderRadius: '4px',
+                            fontSize: '13px',
+                            fontWeight: 'bold'
+                          }}>
+                            {(result.avgScore * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <div style={{ color: '#666', marginBottom: '4px' }}>Detections</div>
+                        <div style={{ fontWeight: 'bold' }}>{result.totalDetections}</div>
                       </div>
                     </div>
-                    
-                    <div>
-                      <div style={{ color: '#666', marginBottom: '4px' }}>Accuracy</div>
-                      <div>
-                        <span style={{
-                          backgroundColor: result.avgScore > 0.8 ? '#d4edda' : result.avgScore > 0.6 ? '#fff3cd' : '#f8d7da',
-                          padding: '3px 6px',
-                          borderRadius: '4px',
-                          fontSize: '13px',
-                          fontWeight: 'bold'
-                        }}>
-                          {(result.avgScore * 100).toFixed(1)}%
-                        </span>
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <div style={{ color: '#666', marginBottom: '4px' }}>Detections</div>
-                      <div style={{ fontWeight: 'bold' }}>{result.totalDetections}</div>
-                    </div>
-                  </div>
+                  )}
                 </div>
               ))}
             </div>
           ) : (
-            /* Показываем таблицу на десктопе */
             <div style={{ overflowX: 'auto' }}>
               <table style={{ 
                 width: '100%', 
@@ -576,12 +591,11 @@ const ModelBenchmark = ({ device, client, labels }) => {
           )}
           
           <div style={{ marginTop: '20px', textAlign: 'center', color: '#6c757d' }}>
-            <small>✅ Benchmark completed on {imageFiles.length} images across {models.length} models</small>
+            <small>✅ Benchmark completed on {results.reduce((sum, r) => sum + r.images.length, 0)} images across {results.length} models</small>
           </div>
         </div>
       )}
       
-      {/* Скрытый canvas для детекции */}
       <canvas ref={canvasRef} style={{ display: 'none' }} />
     </div>
   );
