@@ -98,7 +98,7 @@ const ModelBenchmark = ({ device, client, labels }) => {
           fetchOptions: { cache: 'no-cache' }
         }),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Loading timeout')), 30000)
+          setTimeout(() => reject(new Error('Loading timeout')), 50000)
         )
       ]);
       
