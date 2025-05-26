@@ -32,50 +32,36 @@ const App = () => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
+  // Легкий warmup только для TensorFlow.js без загрузки моделей
   useEffect(() => {
     const performWarmup = async () => {
       try {
-        setWarmupProgress(10);
-        
-        await tf.ready();
         setWarmupProgress(20);
         
-        const warmupTensor = tf.zeros([1, 640, 640, 3]);
+        // Ждем готовности TensorFlow.js
+        await tf.ready();
+        setWarmupProgress(50);
+        
+        // Создаем простые операции для инициализации WebGL backend
+        const warmupTensor = tf.zeros([1, 224, 224, 3]);
         const result = tf.add(warmupTensor, tf.scalar(1));
-        await result.data(); 
+        await result.data(); // Заставляем выполниться на GPU
         warmupTensor.dispose();
         result.dispose();
-        setWarmupProgress(40);
-        
-        const warmupModel = await tf.loadGraphModel(
-          `${window.location.href}/yolo11n_web_model/model.json`,
-          {
-            onProgress: (fractions) => {
-              setWarmupProgress(40 + fractions * 40); // 40-80%
-            },
-          }
-        );
         setWarmupProgress(80);
         
-        const inputShape = warmupModel.inputs[0].shape;
-        const dummyInput = tf.ones(inputShape);
+        // Создаем еще несколько операций для стабилизации
+        const testTensor = tf.randomNormal([1, 100, 100, 3]);
+        const convTest = tf.conv2d(testTensor, tf.randomNormal([3, 3, 3, 16]), 1, 'same');
+        await convTest.data();
+        testTensor.dispose();
+        convTest.dispose();
         
-        for (let i = 0; i < 3; i++) {
-          const warmupResults = warmupModel.execute(dummyInput);
-          if (Array.isArray(warmupResults)) {
-            warmupResults.forEach(tensor => tensor.dispose());
-          } else {
-            warmupResults.dispose();
-          }
-        }
-        
-        dummyInput.dispose();
-        warmupModel.dispose();
         setWarmupProgress(100);
         
         setTimeout(() => {
           setWarmupCompleted(true);
-        }, 500);
+        }, 300);
         
       } catch (error) {
         console.error('Warmup failed:', error);
@@ -108,14 +94,20 @@ const App = () => {
     const dummyInput = tf.ones(yoloModel.inputs[0].shape);
     const warmupResults = yoloModel.execute(dummyInput);
 
+    // Правильная очистка warmup результатов
+    if (Array.isArray(warmupResults)) {
+      warmupResults.forEach(tensor => tensor.dispose());
+    } else {
+      warmupResults.dispose();
+    }
+    dummyInput.dispose();
+
     setLoading({ loading: false, progress: 1 });
     setModel({
       net: yoloModel,
       inputShape: yoloModel.inputs[0].shape,
     });
     setModelLoaded(true);
-
-    tf.dispose([warmupResults, dummyInput]);
     
     if (initialLoadTime === null) {
       setInitialLoadTime(loadDuration);
@@ -197,7 +189,7 @@ const App = () => {
       <div className="App">
         <Loader>
           <div style={{ textAlign: 'center' }}>
-            <b>🚀 Initializing TensorFlow.js & YOLO...</b>
+            <b>🚀 Initializing TensorFlow.js...</b>
             <div style={{ 
               marginTop: '20px',
               width: '300px',
@@ -218,7 +210,7 @@ const App = () => {
               />
             </div>
             <div style={{ fontSize: '14px', color: '#666' }}>
-              {warmupProgress.toFixed(0)}% - Preparing system for optimal performance...
+              {warmupProgress.toFixed(0)}% - Preparing WebGL backend...
             </div>
           </div>
         </Loader>
@@ -234,6 +226,19 @@ const App = () => {
 
           {device === null ? (
             <>
+              <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                <div style={{ 
+                  display: 'inline-block',
+                  padding: '10px 20px',
+                  backgroundColor: '#d4edda',
+                  border: '1px solid #c3e6cb',
+                  borderRadius: '6px',
+                  color: '#155724',
+                  fontSize: '14px'
+                }}>
+                  ✅ TensorFlow.js initialized and ready!
+                </div>
+              </div>
               <b>Please enter your device model</b>
               <input onChange={e => setDeviceInput(e.target.value)}/>
               <button onClick={handleDeviceSave}>Submit</button>
