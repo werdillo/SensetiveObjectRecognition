@@ -73,26 +73,45 @@ const ModelBenchmark = ({ device, client, labels }) => {
     try {
       setCurrentStatus(`Loading ${modelName}...`);
       
+      // Проверяем доступную память перед загрузкой больших моделей
+      const memBefore = tf.memory();
+      if (modelName === 'yolo11m' && memBefore.numTensors > 10) {
+        setCurrentStatus(`Preparing memory for ${modelName}...`);
+        await forceGarbageCollection();
+      }
+      
       // НАЧИНАЕМ замер времени только здесь
       const startTime = performance.now();
       
       const model = await tf.loadGraphModel(
-        `/${modelName}_web_model/model.json`
+        `/${modelName}_web_model/model.json`,
+        {
+          fetchOptions: {
+            cache: 'no-cache' // Отключаем кэш для честного тестирования
+          }
+        }
       );
       
       setCurrentStatus(`Warming up ${modelName}...`);
       
-      // ИСПРАВЛЕННЫЙ warming up
+      // Осторожный warming up для больших моделей на iOS
       const dummyInput = tf.ones(model.inputs[0].shape);
       const warmupResults = model.execute(dummyInput);
       
       // Правильная очистка тензоров
       if (Array.isArray(warmupResults)) {
-        warmupResults.forEach(tensor => tensor.dispose());
-      } else {
+        warmupResults.forEach(tensor => {
+          if (tensor && typeof tensor.dispose === 'function') {
+            tensor.dispose();
+          }
+        });
+      } else if (warmupResults && typeof warmupResults.dispose === 'function') {
         warmupResults.dispose();
       }
-      dummyInput.dispose();
+      
+      if (dummyInput && typeof dummyInput.dispose === 'function') {
+        dummyInput.dispose();
+      }
       
       // ЗАКАНЧИВАЕМ замер времени здесь (до очистки памяти)
       const loadTime = performance.now() - startTime;
@@ -104,6 +123,12 @@ const ModelBenchmark = ({ device, client, labels }) => {
       };
     } catch (error) {
       console.error(`Failed to load model ${modelName}:`, error);
+      
+      // Специальная обработка для больших моделей на мобильных устройствах
+      if (modelName === 'yolo11m' && (navigator.userAgent.includes('iPhone') || navigator.userAgent.includes('iPad'))) {
+        throw new Error(`Model ${modelName} requires too much memory for this device`);
+      }
+      
       throw error;
     }
   };
@@ -143,18 +168,26 @@ const ModelBenchmark = ({ device, client, labels }) => {
     });
   };
 
-  // Функция принудительной очистки памяти
+  // Функция принудительной очистки памяти с дополнительными проверками
   const forceGarbageCollection = async () => {
     // Принудительная очистка памяти TensorFlow.js
     await tf.nextFrame();
+    await tf.nextFrame(); // Двойная очистка для iOS
     
     // Проверяем использование памяти
     const memInfo = tf.memory();
     console.log(`Memory: ${memInfo.numTensors} tensors, ${(memInfo.numBytes / 1024 / 1024).toFixed(1)} MB`);
     
-    // Если много тензоров - ждем еще кадр
-    if (memInfo.numTensors > 50) {
+    // Если много тензоров - ждем еще несколько кадров
+    if (memInfo.numTensors > 20) {
       await tf.nextFrame();
+      await tf.nextFrame();
+      await tf.nextFrame();
+    }
+    
+    // Дополнительная пауза для iOS
+    if (navigator.userAgent.includes('iPhone') || navigator.userAgent.includes('iPad')) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
   };
 
@@ -205,10 +238,25 @@ const ModelBenchmark = ({ device, client, labels }) => {
     
     for (const modelName of models) {
       try {
-        // Принудительная очистка памяти перед загрузкой новой модели
-        // НЕ ВКЛЮЧАЕТСЯ в время загрузки модели
+        // Дополнительная очистка памяти перед каждой моделью
         setCurrentStatus(`Preparing memory for ${modelName}...`);
         await forceGarbageCollection();
+        
+        // Проверяем память перед загрузкой yolo11m
+        const memInfo = tf.memory();
+        if (modelName === 'yolo11m' && memInfo.numBytes > 100 * 1024 * 1024) { // Больше 100MB
+          setCurrentStatus(`Insufficient memory for ${modelName}, skipping...`);
+          benchmarkResults.push({
+            model: modelName,
+            loadTime: 0,
+            avgDetectionTime: 0,
+            avgScore: 0,
+            totalDetections: 0,
+            images: [],
+            error: 'Insufficient memory'
+          });
+          continue;
+        }
         
         const model = await loadModel(modelName);
         const modelResults = {
@@ -258,15 +306,20 @@ const ModelBenchmark = ({ device, client, labels }) => {
         
         // ВАЖНО: Правильная очистка модели (НЕ включается в время загрузки следующей модели)
         setCurrentStatus(`Cleaning up ${modelName}...`);
-        model.net.dispose();
+        if (model.net && typeof model.net.dispose === 'function') {
+          model.net.dispose();
+        }
         
-        // Принудительная очистка памяти после каждой модели
-        // НЕ ВКЛЮЧАЕТСЯ в время загрузки следующей модели
+        // Принудительная очистка памяти после каждой модели (особенно важно для iOS)
         await forceGarbageCollection();
         
       } catch (error) {
         console.error(`Error with model ${modelName}:`, error);
-        // Добавляем пустой результат для неудачной модели
+        
+        // Специальная обработка для ошибок памяти на iOS
+        const isMemoryError = error.message.includes('memory') || error.message.includes('Memory') || 
+                            error.message.includes('allocation') || error.name === 'RangeError';
+        
         benchmarkResults.push({
           model: modelName,
           loadTime: 0,
@@ -274,8 +327,14 @@ const ModelBenchmark = ({ device, client, labels }) => {
           avgScore: 0,
           totalDetections: 0,
           images: [],
-          error: error.message
+          error: isMemoryError ? 'Out of memory' : error.message
         });
+        
+        // Если ошибка памяти на большой модели - пропускаем остальные большие модели
+        if (isMemoryError && modelName === 'yolo11m') {
+          setCurrentStatus('Memory limit reached, stopping benchmark...');
+          break;
+        }
       }
     }
     
