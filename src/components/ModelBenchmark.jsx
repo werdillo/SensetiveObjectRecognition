@@ -80,35 +80,19 @@ const ModelBenchmark = ({ device, client, labels }) => {
     console.log(`Memory after cleanup: ${tf.memory().numTensors} tensors, ${(tf.memory().numBytes / 1024 / 1024).toFixed(1)} MB`);
   };
 
-  // Проверка возможности загрузки модели
-  const canLoadModel = (modelName) => {
-    const capabilities = getDeviceCapabilities();
-    const currentMemory = tf.memory().numBytes;
-    
-    if (modelName === 'yolo11m' && (capabilities.isLowEnd || currentMemory > capabilities.maxMemory * 0.6)) {
-      return false;
-    }
-    if (modelName === 'yolo11s' && currentMemory > capabilities.maxMemory * 0.8) {
-      return false;
-    }
-    return true;
-  };
+  // Убираем предварительные проверки - пусть пробует загружать все модели
 
   const loadModel = async (modelName) => {
     try {
-      setCurrentStatus(`Checking memory for ${modelName}...`);
+      setCurrentStatus(`Preparing memory for ${modelName}...`);
       
-      if (!canLoadModel(modelName)) {
-        throw new Error(`Model ${modelName} not supported on this device (insufficient memory)`);
-      }
-
-      // Очистка памяти перед загрузкой
+      // Очистка памяти перед загрузкой (но без проверок)
       await forceGarbageCollection();
       
       setCurrentStatus(`Loading ${modelName}...`);
       const startTime = performance.now();
       
-      // Загрузка с таймаутом
+      // Пытаемся загрузить ЛЮБУЮ модель без предварительных проверок
       const model = await Promise.race([
         tf.loadGraphModel(`/${modelName}_web_model/model.json`, {
           fetchOptions: { cache: 'no-cache' }
@@ -238,12 +222,34 @@ const ModelBenchmark = ({ device, client, labels }) => {
     const benchmarkResults = [];
     const capabilities = getDeviceCapabilities();
     
+    // Определяем какие модели тестировать
+    let modelsToTest = [...models]; // копируем все модели
+    
+    // Если памяти мало - не тестируем yolo11m
+    const memory = navigator.deviceMemory || 4;
+    if (memory <= 3) {
+      modelsToTest = modelsToTest.filter(model => model !== 'yolo11m');
+      console.log(`Skipping yolo11m due to low memory: ${memory}GB`);
+      
+      // Добавляем запись о том, что модель пропущена
+      benchmarkResults.push({
+        model: 'yolo11m',
+        loadTime: 0,
+        avgDetectionTime: 0,
+        avgScore: 0,
+        totalDetections: 0,
+        images: [],
+        errors: 0,
+        error: `Skipped due to insufficient RAM: ${memory}GB (minimum 4GB required)`
+      });
+    }
+    
     // Ограничиваем изображения для слабых устройств
     const testImages = capabilities.isLowEnd ? imageFiles.slice(0, 20) : imageFiles;
-    const totalTests = models.length * testImages.length;
+    const totalTests = modelsToTest.length * testImages.length;
     let currentTest = 0;
     
-    for (const modelName of models) {
+    for (const modelName of modelsToTest) {
       try {
         setCurrentStatus(`Starting ${modelName}...`);
         
